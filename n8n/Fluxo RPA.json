@@ -1,0 +1,346 @@
+{
+  "name": "Fluxo RPA - DIO Extra",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "Clientes",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -208,
+        16
+      ],
+      "id": "eac7c953-2f0d-4fd4-9e35-4000fe24dcb3",
+      "name": "Webhook",
+      "webhookId": "efa83581-5b7b-4e55-8d4d-29cf3fb1f1e5"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        2080,
+        -144
+      ],
+      "id": "13a47f38-acb7-45e7-afca-403d07b54d9c",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "url": "https://digitalinnovationone.github.io/dio-lab-assistente-investimentos-rpa-n8n/data.csv",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        32,
+        64
+      ],
+      "id": "9f03878e-dd04-4381-9a56-08a4963a2a7d",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "jsCode": "const csvRaw = $json.data ?? $json.body ?? $json;\nconst text = (typeof csvRaw === \"string\") ? csvRaw : JSON.stringify(csvRaw);\n\nconst lines = text.split(/\\r?\\n/).map(line => line.trim()).filter(Boolean);\nconst headers = lines[0].split(\",\").map(h => h.trim());\n\nconst investimentos = lines.slice(1).map(line => {\n  const cols = line.split(\",\").map(c => c.trim());\n  const obj = {};\n  headers.forEach((h, i) => obj[h] = cols[i] ?? \"\");\n\n  obj.minimo = Number(String(obj.minimo).replace(/[^\\d]/g, \"\")) || 0;\n\n  return obj;\n});\n\nreturn [{ json: { investimentos } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        16
+      ],
+      "id": "e75a5cef-7188-4f48-bf50-479a6783c0fc",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        464,
+        -128
+      ],
+      "id": "7c793b1e-6b52-4c3d-b01d-486fa6448a4f",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\n\nconst clientes = item.body?.clientes ?? item.clientes ?? [];\nconst investimentos = item.investimentos ?? [];\n\nfunction limparTexto(valor) {\n  return String(valor ?? \"\")\n    .trim()\n    .toLowerCase()\n    .normalize(\"NFD\")\n    .replace(/[\\u0300-\\u036f]/g, \"\");\n}\n\nfunction saldoParaNumero(valor) {\n  return Number(\n    String(valor ?? \"\")\n      .replace(\"R$\", \"\")\n      .replace(/\\./g, \"\")\n      .replace(\",\", \".\")\n      .trim()\n  ) || 0;\n}\n\nfunction minimoParaNumero(valor) {\n  return Number(\n    String(valor ?? \"\")\n      .replace(\"R$\", \"\")\n      .replace(/\\./g, \"\")\n      .replace(\",\", \".\")\n      .replace(/[^\\d.]/g, \"\")\n      .trim()\n  ) || 0;\n}\n\nfunction rentabilidadeParaNumero(valor) {\n  return Number(\n    String(valor ?? \"\")\n      .replace(\"%\", \"\")\n      .replace(\",\", \".\")\n      .trim()\n  ) || 0;\n}\n\nfunction formatarMoeda(valor) {\n  return valor.toLocaleString(\"pt-BR\", {\n    style: \"currency\",\n    currency: \"BRL\"\n  });\n}\n\nconst recomendacoes = clientes.map(cliente => {\n  const nome = cliente.nome;\n  const email = cliente.email;\n  const perfilCliente = cliente.perfil;\n  const saldoCliente = saldoParaNumero(cliente.saldo);\n\n  const opcoesCompativeis = investimentos\n    .filter(investimento => {\n      const mesmoPerfil =\n        limparTexto(investimento.perfil) === limparTexto(perfilCliente);\n\n      const valorMinimo = minimoParaNumero(investimento.minimo);\n\n      return mesmoPerfil && saldoCliente >= valorMinimo;\n    })\n    .sort((a, b) => {\n      return (\n        rentabilidadeParaNumero(b.rentabilidade) -\n        rentabilidadeParaNumero(a.rentabilidade)\n      );\n    });\n\n  const melhorOpcao = opcoesCompativeis[0];\n\n  let mensagem;\n\n  if (melhorOpcao) {\n    mensagem =\n      `Olá, ${nome}!\\n\\n` +\n      `Com base no seu perfil de investidor (${perfilCliente}) e no seu saldo disponível de ${formatarMoeda(saldoCliente)}, ` +\n      `identificamos uma opção de investimento compatível com o seu cadastro.\\n\\n` +\n      `Recomendação principal:\\n` +\n      `Produto: ${melhorOpcao.produto}\\n` +\n      `Perfil indicado: ${melhorOpcao.perfil}\\n` +\n      `Valor mínimo: ${formatarMoeda(minimoParaNumero(melhorOpcao.minimo))}\\n` +\n      `Rentabilidade estimada: ${melhorOpcao.rentabilidade}\\n\\n` +\n      `Essa recomendação foi selecionada porque respeita o seu perfil de risco e está dentro do saldo disponível informado.`;\n  } else {\n    mensagem =\n      `Olá, ${nome}!\\n\\n` +\n      `Com base no seu perfil de investidor (${perfilCliente}) e no seu saldo disponível de ${formatarMoeda(saldoCliente)}, ` +\n      `não encontramos, no momento, uma opção de investimento compatível com os critérios disponíveis.\\n\\n` +\n      `Isso pode ocorrer quando o saldo informado é inferior ao valor mínimo exigido pelos produtos associados ao seu perfil.`;\n  }\n\n  return {\n    json: {\n      nome,\n      email,\n      perfil: perfilCliente,\n      saldo: saldoCliente,\n      recomendacao: melhorOpcao ?? null,\n      quantidadeOpcoesDisponiveis: opcoesCompativeis.length,\n      mensagem\n    }\n  };\n});\n\nreturn recomendacoes;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        656,
+        -128
+      ],
+      "id": "be3a9de2-1a4b-4dc0-83f0-09c28e51f98c",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nfunction limparTexto(valor) {\n  return String(valor ?? \"\").trim();\n}\n\nfunction formatarMoeda(valor) {\n  const numero = Number(valor) || 0;\n\n  return numero.toLocaleString(\"pt-BR\", {\n    style: \"currency\",\n    currency: \"BRL\"\n  });\n}\n\nfunction formatarDataHora() {\n  return new Date().toLocaleString(\"pt-BR\", {\n    timeZone: \"America/Sao_Paulo\",\n    day: \"2-digit\",\n    month: \"2-digit\",\n    year: \"numeric\",\n    hour: \"2-digit\",\n    minute: \"2-digit\"\n  });\n}\n\nfunction formatarRentabilidade(valor) {\n  const texto = limparTexto(valor);\n\n  if (!texto) {\n    return \"Não informada\";\n  }\n\n  return texto.includes(\"%\") ? texto : `${texto}%`;\n}\n\nfunction formatarValorMinimo(valor) {\n  const numero = Number(valor) || 0;\n  return formatarMoeda(numero);\n}\n\nconst dataProcessamento = formatarDataHora();\n\nreturn items.map(item => {\n  const dados = item.json;\n\n  const nome = limparTexto(dados.nome);\n  const email = limparTexto(dados.email);\n  const perfil = limparTexto(dados.perfil);\n  const saldo = Number(dados.saldo) || 0;\n  const saldoFormatado = formatarMoeda(saldo);\n\n  const recomendacao = dados.recomendacao;\n  const possuiRecomendacao = recomendacao !== null && recomendacao !== undefined;\n\n  let produto = \"Nenhum produto disponível\";\n  let perfilProduto = \"Não aplicável\";\n  let valorMinimo = \"Não aplicável\";\n  let rentabilidade = \"Não aplicável\";\n  let status = \"Sem recomendação disponível\";\n  let resumoRecomendacao = \"\";\n  let mensagemFinalTexto = \"\";\n  let mensagemFinalHtml = \"\";\n\n  if (possuiRecomendacao) {\n    produto = limparTexto(recomendacao.produto);\n    perfilProduto = limparTexto(recomendacao.perfil);\n    valorMinimo = formatarValorMinimo(recomendacao.minimo);\n    rentabilidade = formatarRentabilidade(recomendacao.rentabilidade);\n    status = \"Recomendação gerada com sucesso\";\n\n    resumoRecomendacao =\n      `Produto recomendado: ${produto}\\n` +\n      `Perfil do produto: ${perfilProduto}\\n` +\n      `Valor mínimo: ${valorMinimo}\\n` +\n      `Rentabilidade estimada: ${rentabilidade}`;\n\n    mensagemFinalTexto =\n      `Olá, ${nome}.\\n\\n` +\n      `Com base no seu perfil de investidor e nas informações disponíveis, encontramos uma recomendação compatível para você.\\n\\n` +\n      `Dados considerados:\\n` +\n      `Perfil do cliente: ${perfil}\\n` +\n      `Saldo disponível: ${saldoFormatado}\\n\\n` +\n      `Recomendação:\\n` +\n      `${resumoRecomendacao}\\n\\n` +\n      `Motivo da recomendação:\\n` +\n      `O produto foi selecionado porque está alinhado ao seu perfil de risco e possui valor mínimo compatível com o saldo informado.\\n\\n` +\n      `Observação: esta recomendação foi gerada automaticamente com base nos dados disponíveis no sistema.`;\n\n    mensagemFinalHtml =\n      `<p>Olá, <strong>${nome}</strong>.</p>` +\n      `<p>Com base no seu perfil de investidor e nas informações disponíveis, encontramos uma recomendação compatível para você.</p>` +\n      `<p><strong>Dados considerados:</strong></p>` +\n      `<ul>` +\n      `<li>Perfil do cliente: ${perfil}</li>` +\n      `<li>Saldo disponível: ${saldoFormatado}</li>` +\n      `</ul>` +\n      `<p><strong>Recomendação:</strong></p>` +\n      `<ul>` +\n      `<li>Produto recomendado: ${produto}</li>` +\n      `<li>Perfil do produto: ${perfilProduto}</li>` +\n      `<li>Valor mínimo: ${valorMinimo}</li>` +\n      `<li>Rentabilidade estimada: ${rentabilidade}</li>` +\n      `</ul>` +\n      `<p><strong>Motivo da recomendação:</strong></p>` +\n      `<p>O produto foi selecionado porque está alinhado ao seu perfil de risco e possui valor mínimo compatível com o saldo informado.</p>` +\n      `<p><em>Observação: esta recomendação foi gerada automaticamente com base nos dados disponíveis no sistema.</em></p>`;\n  } else {\n    mensagemFinalTexto =\n      `Olá, ${nome}.\\n\\n` +\n      `Analisamos seu perfil de investidor e o saldo disponível informado, mas não encontramos uma opção compatível no momento.\\n\\n` +\n      `Dados considerados:\\n` +\n      `Perfil do cliente: ${perfil}\\n` +\n      `Saldo disponível: ${saldoFormatado}\\n\\n` +\n      `Possível motivo:\\n` +\n      `O saldo informado pode estar abaixo do valor mínimo exigido pelos produtos disponíveis para o seu perfil.\\n\\n` +\n      `Observação: esta análise foi gerada automaticamente com base nos dados disponíveis no sistema.`;\n\n    mensagemFinalHtml =\n      `<p>Olá, <strong>${nome}</strong>.</p>` +\n      `<p>Analisamos seu perfil de investidor e o saldo disponível informado, mas não encontramos uma opção compatível no momento.</p>` +\n      `<p><strong>Dados considerados:</strong></p>` +\n      `<ul>` +\n      `<li>Perfil do cliente: ${perfil}</li>` +\n      `<li>Saldo disponível: ${saldoFormatado}</li>` +\n      `</ul>` +\n      `<p><strong>Possível motivo:</strong></p>` +\n      `<p>O saldo informado pode estar abaixo do valor mínimo exigido pelos produtos disponíveis para o seu perfil.</p>` +\n      `<p><em>Observação: esta análise foi gerada automaticamente com base nos dados disponíveis no sistema.</em></p>`;\n  }\n\n  return {\n    json: {\n      cliente: {\n        nome,\n        email,\n        perfil,\n        saldo,\n        saldo_formatado: saldoFormatado\n      },\n\n      recomendacao: {\n        status,\n        possui_recomendacao: possuiRecomendacao,\n        produto,\n        perfil_produto: perfilProduto,\n        valor_minimo: valorMinimo,\n        rentabilidade_estimada: rentabilidade,\n        quantidade_opcoes_disponiveis: dados.quantidadeOpcoesDisponiveis ?? 0\n      },\n\n      envio: {\n        destinatario: email,\n        assunto: possuiRecomendacao\n          ? `Recomendação de investimento para ${nome}`\n          : `Análise de investimento para ${nome}`,\n        mensagem_texto: mensagemFinalTexto,\n        mensagem_html: mensagemFinalHtml\n      },\n\n      controle: {\n        data_processamento: dataProcessamento,\n        origem: \"Fluxo RPA + n8n\",\n        etapa: \"Preparação final dos dados\"\n      }\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        864,
+        -128
+      ],
+      "id": "7720276d-c0df-414c-9812-b8500c9441dd",
+      "name": "Code in JavaScript2"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4.1-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4.1-MINI"
+        },
+        "responses": {
+          "values": [
+            {
+              "content": "=Escreva um E-mail curto em pt-BR para o cliente abaixo, sem prometer ganhos e sem garantias\nCliente:\nNome: {{ $json.cliente.nome }}\nPerfil: {{ $json.cliente.perfil }}\nSaldo: {{ $json.cliente.saldo }}\n\nRecomendação:\nProduto: {{ $json.recomendacao.produto }}\nValor mínimo: {{ $json.recomendacao.valor_minimo }}\nRentabilidade estimada: {{ $json.recomendacao.rentabilidade_estimada }}\n\nRetorne APENAS JSON com:\n{\n\"subject\": \"...\"\n\"text_body\": \"...\"\n\"html_body\": \"...\"\n}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        1072,
+        -128
+      ],
+      "id": "6b3843ca-5e1c-41e3-aaf8-d3608b4129d6",
+      "name": "Message a model",
+      "credentials": {
+        "openAiApi": {
+          "id": "ja9lCu7jUOMytDC8",
+          "name": "n8n free OpenAI API credits"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nconst NOME_NO_DADOS_ORIGINAIS = \"Code in JavaScript2\";\n\nlet itensOriginais = [];\n\ntry {\n  itensOriginais = $items(NOME_NO_DADOS_ORIGINAIS);\n} catch (error) {\n  itensOriginais = [];\n}\n\nfunction limparTexto(valor) {\n  return String(valor ?? \"\").trim();\n}\n\nfunction primeiroValor(...valores) {\n  for (const valor of valores) {\n    if (valor !== undefined && valor !== null && String(valor).trim() !== \"\") {\n      return valor;\n    }\n  }\n\n  return \"\";\n}\n\nfunction emailValido(email) {\n  const texto = limparTexto(email);\n\n  if (!texto) return false;\n\n  return /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(texto);\n}\n\nfunction formatarMoeda(valor) {\n  const numero = Number(valor) || 0;\n\n  return numero.toLocaleString(\"pt-BR\", {\n    style: \"currency\",\n    currency: \"BRL\"\n  });\n}\n\nfunction parseBRL(valor) {\n  if (valor === undefined || valor === null || valor === \"\") return 0;\n\n  if (typeof valor === \"number\" && Number.isFinite(valor)) {\n    return valor;\n  }\n\n  let texto = String(valor)\n    .replace(\"R$\", \"\")\n    .replace(/\\s/g, \"\")\n    .trim();\n\n  if (texto.includes(\".\") && texto.includes(\",\")) {\n    texto = texto.replace(/\\./g, \"\").replace(\",\", \".\");\n  } else if (texto.includes(\",\")) {\n    texto = texto.replace(\",\", \".\");\n  } else if (/^\\d{1,3}(\\.\\d{3})+$/.test(texto)) {\n    texto = texto.replace(/\\./g, \"\");\n  }\n\n  texto = texto.replace(/[^\\d.-]/g, \"\");\n\n  const numero = Number(texto);\n  return Number.isFinite(numero) ? numero : 0;\n}\n\nfunction formatarDataHora() {\n  return new Date().toLocaleString(\"pt-BR\", {\n    timeZone: \"America/Sao_Paulo\",\n    day: \"2-digit\",\n    month: \"2-digit\",\n    year: \"numeric\",\n    hour: \"2-digit\",\n    minute: \"2-digit\"\n  });\n}\n\nfunction removerMarkdownJson(texto) {\n  return String(texto ?? \"\")\n    .replace(/```json/gi, \"\")\n    .replace(/```/g, \"\")\n    .trim();\n}\n\nfunction tentarExtrairJson(valor) {\n  if (!valor) return null;\n\n  if (typeof valor === \"object\") {\n    return valor;\n  }\n\n  const texto = removerMarkdownJson(valor);\n\n  try {\n    return JSON.parse(texto);\n  } catch (error) {\n    const inicio = texto.indexOf(\"{\");\n    const fim = texto.lastIndexOf(\"}\");\n\n    if (inicio >= 0 && fim > inicio) {\n      try {\n        return JSON.parse(texto.slice(inicio, fim + 1));\n      } catch (erroInterno) {\n        return null;\n      }\n    }\n\n    return null;\n  }\n}\n\nfunction obterRespostaAgente(dados) {\n  const candidatos = [\n    dados.output,\n    dados.text,\n    dados.response,\n    dados.result,\n    dados.resultado,\n    dados.message,\n    dados.content,\n    dados\n  ];\n\n  for (const candidato of candidatos) {\n    const json = tentarExtrairJson(candidato);\n\n    if (json && (json.subject || json.text_body || json.html_body)) {\n      return json;\n    }\n  }\n\n  return {};\n}\n\nfunction escaparHtml(valor) {\n  return String(valor ?? \"\")\n    .replace(/&/g, \"&amp;\")\n    .replace(/</g, \"&lt;\")\n    .replace(/>/g, \"&gt;\")\n    .replace(/\"/g, \"&quot;\")\n    .replace(/'/g, \"&#039;\");\n}\n\nfunction textoParaHtml(texto) {\n  const conteudo = escaparHtml(texto);\n\n  return `<p>${conteudo\n    .replace(/\\n\\n/g, \"</p><p>\")\n    .replace(/\\n/g, \"<br>\")}</p>`;\n}\n\nconst dataProcessamento = formatarDataHora();\n\nreturn items.map((item, index) => {\n  const dadosAtuais = item.json;\n  const dadosOriginais = itensOriginais[index]?.json ?? {};\n\n  const respostaAgente = obterRespostaAgente(dadosAtuais);\n\n  const nome = limparTexto(primeiroValor(\n    dadosOriginais.cliente?.nome,\n    dadosOriginais.nome,\n    dadosAtuais.cliente?.nome,\n    dadosAtuais.nome\n  ));\n\n  const emailDetectado = limparTexto(primeiroValor(\n    dadosOriginais.cliente?.email,\n    dadosOriginais.email,\n    dadosOriginais.email_to,\n    dadosOriginais.envio?.destinatario,\n    dadosAtuais.cliente?.email,\n    dadosAtuais.email,\n    dadosAtuais.email_to,\n    dadosAtuais.gmail?.to\n  ));\n\n  const to = emailValido(emailDetectado) ? emailDetectado : \"\";\n\n  const perfil = limparTexto(primeiroValor(\n    dadosOriginais.cliente?.perfil,\n    dadosOriginais.perfil,\n    dadosAtuais.cliente?.perfil,\n    dadosAtuais.perfil\n  ));\n\n  const saldoOriginal = primeiroValor(\n    dadosOriginais.cliente?.saldo,\n    dadosOriginais.cliente?.saldo_formatado,\n    dadosOriginais.saldo,\n    dadosOriginais.saldo_texto,\n    dadosOriginais.saldo_num,\n    dadosAtuais.cliente?.saldo,\n    dadosAtuais.saldo,\n    dadosAtuais.saldo_texto,\n    dadosAtuais.saldo_num\n  );\n\n  const saldoNum = parseBRL(saldoOriginal);\n  const saldoFormatado = formatarMoeda(saldoNum);\n\n  const recomendacao = dadosOriginais.recomendacao ?? dadosAtuais.recomendacao ?? {};\n\n  const statusRecomendacao = limparTexto(primeiroValor(\n    recomendacao.status,\n    dadosOriginais.status,\n    dadosAtuais.status,\n    \"Não informado\"\n  ));\n\n  const possuiRecomendacao = Boolean(\n    recomendacao.possui_recomendacao ??\n    dadosOriginais.possui_recomendacao ??\n    dadosAtuais.possui_recomendacao\n  );\n\n  const produto = limparTexto(primeiroValor(\n    recomendacao.produto,\n    dadosOriginais.produto_recomendado,\n    dadosAtuais.produto_recomendado,\n    \"Nenhum produto disponível\"\n  ));\n\n  const perfilProduto = limparTexto(primeiroValor(\n    recomendacao.perfil_produto,\n    dadosOriginais.perfil_produto,\n    dadosAtuais.perfil_produto,\n    \"Não aplicável\"\n  ));\n\n  const valorMinimo = limparTexto(primeiroValor(\n    recomendacao.valor_minimo,\n    dadosOriginais.valor_minimo_texto,\n    dadosAtuais.valor_minimo_texto,\n    \"Não aplicável\"\n  ));\n\n  const rentabilidade = limparTexto(primeiroValor(\n    recomendacao.rentabilidade_estimada,\n    dadosOriginais.rentabilidade_estimada,\n    dadosAtuais.rentabilidade_estimada,\n    \"Não aplicável\"\n  ));\n\n  const quantidadeOpcoes = Number(primeiroValor(\n    recomendacao.quantidade_opcoes_disponiveis,\n    dadosOriginais.quantidade_opcoes_disponiveis,\n    dadosAtuais.quantidade_opcoes_disponiveis,\n    0\n  ));\n\n  const subject = limparTexto(primeiroValor(\n    respostaAgente.subject,\n    dadosOriginais.envio?.assunto,\n    dadosAtuais.envio?.assunto,\n    possuiRecomendacao\n      ? `Recomendação de investimento para ${nome}`\n      : `Análise de investimento para ${nome}`\n  ));\n\n  const textBody = limparTexto(primeiroValor(\n    respostaAgente.text_body,\n    dadosOriginais.envio?.mensagem_texto,\n    dadosAtuais.envio?.mensagem_texto,\n    `Olá, ${nome}.\n\nCom base no seu perfil ${perfil} e no saldo disponível de ${saldoFormatado}, preparamos uma análise de investimento.\n\nProduto: ${produto}\nValor mínimo: ${valorMinimo}\nRentabilidade estimada: ${rentabilidade}\n\nEsta mensagem não representa promessa de ganho ou garantia de rentabilidade.`\n  ));\n\n  let htmlBody = limparTexto(primeiroValor(\n    respostaAgente.html_body,\n    dadosOriginais.envio?.mensagem_html,\n    dadosAtuais.envio?.mensagem_html\n  ));\n\n  if (!htmlBody) {\n    htmlBody = textoParaHtml(textBody);\n  }\n\n  const htmlBodyGmail = `\n<div style=\"font-family: Arial, sans-serif; font-size: 14px; line-height: 1.6; color: #202124;\">\n  ${htmlBody.startsWith(\"<\") ? htmlBody : textoParaHtml(htmlBody)}\n\n  <hr style=\"border: none; border-top: 1px solid #e0e0e0; margin: 24px 0;\">\n\n  <p style=\"font-size: 12px; color: #666;\">\n    Mensagem gerada automaticamente pelo fluxo RPA + n8n.\n    As informações apresentadas não constituem promessa de ganho ou garantia de rentabilidade.\n  </p>\n</div>\n  `.trim();\n\n  return {\n    json: {\n      to,\n      email_detectado: emailDetectado,\n      email_valido: emailValido(emailDetectado),\n\n      subject,\n      text_body: textBody,\n      html_body: htmlBodyGmail,\n\n      cliente_nome: nome,\n      cliente_email: emailDetectado,\n      cliente_perfil: perfil,\n      cliente_saldo_original: saldoOriginal,\n      cliente_saldo_num: saldoNum,\n      cliente_saldo_formatado: saldoFormatado,\n\n      recomendacao_status: statusRecomendacao,\n      recomendacao_possui_recomendacao: possuiRecomendacao,\n      recomendacao_produto: produto,\n      recomendacao_perfil_produto: perfilProduto,\n      recomendacao_valor_minimo: valorMinimo,\n      recomendacao_rentabilidade_estimada: rentabilidade,\n      recomendacao_quantidade_opcoes_disponiveis: quantidadeOpcoes,\n\n      controle_data_processamento: dataProcessamento,\n      controle_origem: \"Fluxo RPA + n8n\",\n      controle_etapa: \"Normalização para Gmail\",\n      controle_pronto_para_envio: Boolean(to && subject && htmlBodyGmail),\n      controle_fonte_dados_originais: NOME_NO_DADOS_ORIGINAIS\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1424,
+        -128
+      ],
+      "id": "42b99a28-5986-4d52-8809-88a87dcdf388",
+      "name": "Code in JavaScript3"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.gmail.to }}",
+        "subject": "={{ $json.gmail.subject }}",
+        "message": "={{ $json.gmail.html_body }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1856,
+        -144
+      ],
+      "id": "610d6354-5d1e-4ada-924a-ca85d4810ce0",
+      "name": "Send a message",
+      "webhookId": "2d3e357a-4a9b-404e-8088-ca4efb881c61",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "6hPYXI95FGcLCtiA",
+          "name": "Gmail OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "08be4b7e-5937-4107-8205-138bf404f1c5",
+              "leftValue": "={{ $json.gmail.to }}",
+              "rightValue": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$",
+              "operator": {
+                "type": "string",
+                "operation": "regex"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1632,
+        -128
+      ],
+      "id": "21207fd4-b7a7-4439-ab6c-b11726e04b79",
+      "name": "If"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond to Webhook": {
+      "main": [
+        []
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript3": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "85b43966-c3ca-445c-b644-1810d2d8c7f1",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "5fef2316cf150550629a7e088ddb38d29c0b9792f90136ba6460d8388f03492f"
+  },
+  "nodeGroups": [],
+  "id": "Yy2eHeAK5phVBnwe",
+  "tags": []
+}
